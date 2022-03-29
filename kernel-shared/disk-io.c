@@ -997,6 +997,13 @@ int btrfs_check_fs_compatibility(struct btrfs_super_block *sb,
 		btrfs_set_super_incompat_flags(sb, features);
 	}
 
+	/*
+	 * We don't have the ability to repair from P/Q yet, give some warning
+	 * about this
+	 */
+	if (features & BTRFS_FEATURE_INCOMPAT_RAID56)
+		warning("repairing using RAID56 P/Q is not supported yet");
+
 	features = btrfs_super_compat_ro_flags(sb);
 	if (flags & OPEN_CTREE_WRITES) {
 		if (flags & OPEN_CTREE_INVALIDATE_FST) {

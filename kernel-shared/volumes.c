@@ -1645,10 +1645,12 @@ int btrfs_num_copies(struct btrfs_fs_info *fs_info, u64 logical, u64 len)
 		ret = map->num_stripes;
 	else if (map->type & BTRFS_BLOCK_GROUP_RAID10)
 		ret = map->sub_stripes;
-	else if (map->type & BTRFS_BLOCK_GROUP_RAID5)
-		ret = 2;
-	else if (map->type & BTRFS_BLOCK_GROUP_RAID6)
-		ret = 3;
+	else if (map->type & BTRFS_BLOCK_GROUP_RAID56_MASK)
+		/*
+		 * In btrfs-progs we don't yet have the ability to rebuild
+		 * from P/Q, thus currently it can only provide one mirror.
+		 */
+		ret = 1;
 	else
 		ret = 1;
 	return ret;
