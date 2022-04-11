@@ -509,7 +509,7 @@ size_t btrfs_sb_io(int fd, void *buf, off_t offset, int rw)
 	}
 	ASSERT(mirror != -1);
 
-	zone_num = sb_zone_number(ilog2(zone_size_sector) + SECTOR_SHIFT,
+	zone_num = sb_zone_number(zone_size_sector << SECTOR_SHIFT,
 				  mirror);
 
 	rep_size = sizeof(struct blk_zone_report) + sizeof(struct blk_zone) * 2;
@@ -596,7 +596,6 @@ bool btrfs_check_allocatable_zones(struct btrfs_device *device, u64 pos,
 	u64 nzones, begin, end;
 	u64 sb_pos;
 	bool is_sequential;
-	int shift;
 	int i;
 
 	if (!zinfo || zinfo->model == ZONED_NONE)
@@ -612,9 +611,8 @@ bool btrfs_check_allocatable_zones(struct btrfs_device *device, u64 pos,
 	if (end > zinfo->nr_zones)
 		return false;
 
-	shift = ilog2(zinfo->zone_size);
 	for (i = 0; i < BTRFS_SUPER_MIRROR_MAX; i++) {
-		sb_pos = sb_zone_number(shift, i);
+		sb_pos = sb_zone_number(zinfo->zone_size, i);
 		if (!(end < sb_pos || sb_pos + 1 < begin))
 			return false;
 	}
@@ -689,7 +687,7 @@ u64 btrfs_find_allocatable_zones(struct btrfs_device *device, u64 hole_start,
 			u32 sb_zone;
 			u64 sb_pos;
 
-			sb_zone = sb_zone_number(shift, i);
+			sb_zone = sb_zone_number(zinfo->zone_size, i);
 			if (!(end <= sb_zone ||
 			      sb_zone + BTRFS_NR_SB_LOG_ZONES <= begin)) {
 				have_sb = true;

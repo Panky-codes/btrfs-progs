@@ -258,15 +258,19 @@ static inline bool zoned_profile_supported(u64 map_type)
 /*
  * Get the first zone number of the superblock mirror
  */
-static inline u32 sb_zone_number(int shift, int mirror)
+static inline u32 sb_zone_number(u64 size, int mirror)
 {
 	u64 zone = 0;
 
-	ASSERT(0 <= mirror && mirror < BTRFS_SUPER_MIRROR_MAX);
+	ASSERT(mirror < BTRFS_SUPER_MIRROR_MAX);
 	switch (mirror) {
-	case 0: zone = 0; break;
-	case 1: zone = 1ULL << (BTRFS_SB_LOG_FIRST_SHIFT - shift); break;
-	case 2: zone = 1ULL << (BTRFS_SB_LOG_SECOND_SHIFT - shift); break;
+	case 0: zone = BTRFS_SB_LOG_PRIMARY_OFFSET; break;
+	case 1:
+		zone = btrfs_zone_no(BTRFS_SB_LOG_FIRST_OFFSET, size);
+		break;
+	case 2:
+		zone = btrfs_zone_no(BTRFS_SB_LOG_SECOND_OFFSET, size);
+		break;
 	}
 
 	ASSERT(zone <= U32_MAX);
