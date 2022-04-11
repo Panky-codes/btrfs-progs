@@ -574,7 +574,7 @@ static u64 dev_extent_search_start(struct btrfs_device *device, u64 start)
 		return max(start, BTRFS_BLOCK_RESERVED_1M_FOR_SUPER);
 	case BTRFS_CHUNK_ALLOC_ZONED:
 		zone_size = device->zone_info->zone_size;
-		return ALIGN(max_t(u64, start, zone_size), zone_size);
+		return btrfs_zoned_roundup(max_t(u64, start, zone_size), zone_size);
 	default:
 		BUG();
 	}
@@ -585,8 +585,7 @@ static bool dev_extent_hole_check_zoned(struct btrfs_device *device,
 					u64 num_bytes)
 {
 	u64 pos;
-
-	ASSERT(IS_ALIGNED(*hole_start, device->zone_info->zone_size));
+	ASSERT(btrfs_zoned_is_aligned(*hole_start, device->zone_info->zone_size));
 
 	pos = btrfs_find_allocatable_zones(device, *hole_start,
 					   *hole_start + *hole_size, num_bytes);
@@ -784,7 +783,7 @@ next:
 		ret = 0;
 
 out:
-	ASSERT(zone_size == 0 || IS_ALIGNED(max_hole_start, zone_size));
+	ASSERT(zone_size == 0 || btrfs_zoned_is_aligned(max_hole_start, zone_size));
 	btrfs_free_path(path);
 	*start = max_hole_start;
 	if (len)
@@ -816,7 +815,7 @@ int btrfs_insert_dev_extent(struct btrfs_trans_handle *trans,
 	/* Check alignment to zone for a zoned block device */
 	ASSERT(!device->zone_info ||
 	       device->zone_info->model != ZONED_HOST_MANAGED ||
-	       IS_ALIGNED(start, device->zone_info->zone_size));
+	       btrfs_zoned_is_aligned(start, device->zone_info->zone_size));
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -1248,7 +1247,7 @@ static void init_alloc_chunk_ctl_policy_zoned(struct btrfs_fs_info *info,
 		}
 	}
 
-	ctl->max_chunk_size = round_down(ctl->max_chunk_size, zone_size);
+	ctl->max_chunk_size = btrfs_zoned_rounddown(ctl->max_chunk_size, zone_size);
 	ctl->max_chunk_size = max(ctl->max_chunk_size, min_chunk_size);
 }
 
@@ -1412,7 +1411,7 @@ static int create_chunk(struct btrfs_trans_handle *trans,
 			BUG_ON(ret);
 		}
 
-		ASSERT(!zone_size || IS_ALIGNED(dev_offset, zone_size));
+		ASSERT(!zone_size || btrfs_zoned_is_aligned(dev_offset, zone_size));
 
 		device->bytes_used += ctl->stripe_size;
 		ret = btrfs_update_device(trans, device);

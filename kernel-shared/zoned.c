@@ -273,8 +273,8 @@ static int report_zones(int fd, const char *file,
 
 	/* Allocate the zone information array */
 	zinfo->zone_size = zone_bytes;
-	zinfo->nr_zones = device_size / zone_bytes;
-	if (device_size & (zone_bytes - 1))
+	zinfo->nr_zones = btrfs_zone_no(device_size, zone_bytes);
+	if (!btrfs_zoned_is_aligned(device_size, zone_bytes))
 		zinfo->nr_zones++;
 
 	if (zoned_model(file) != ZONED_NONE && max_zone_append_size(file) == 0) {
@@ -601,12 +601,12 @@ bool btrfs_check_allocatable_zones(struct btrfs_device *device, u64 pos,
 	if (!zinfo || zinfo->model == ZONED_NONE)
 		return true;
 
-	nzones = num_bytes / zinfo->zone_size;
-	begin = pos / zinfo->zone_size;
+	nzones = btrfs_zone_no(num_bytes, zinfo->zone_size);
+	begin = btrfs_zone_no(pos, zinfo->zone_size);
 	end = begin + nzones;
 
-	ASSERT(IS_ALIGNED(pos, zinfo->zone_size));
-	ASSERT(IS_ALIGNED(num_bytes, zinfo->zone_size));
+	ASSERT(btrfs_zoned_is_aligned(pos, zinfo->zone_size));
+	ASSERT(btrfs_zoned_is_aligned(num_bytes, zinfo->zone_size));
 
 	if (end > zinfo->nr_zones)
 		return false;
@@ -647,19 +647,18 @@ u64 btrfs_find_allocatable_zones(struct btrfs_device *device, u64 hole_start,
 				 u64 hole_end, u64 num_bytes)
 {
 	struct btrfs_zoned_device_info *zinfo = device->zone_info;
-	int shift = ilog2(zinfo->zone_size);
-	u64 nzones = num_bytes >> shift;
+	u64 nzones = btrfs_zone_no(num_bytes, zinfo->zone_size);
 	u64 pos = hole_start;
 	u64 begin, end;
 	bool is_sequential;
 	bool have_sb;
 	int i;
 
-	ASSERT(IS_ALIGNED(hole_start, zinfo->zone_size));
-	ASSERT(IS_ALIGNED(num_bytes, zinfo->zone_size));
+	ASSERT(btrfs_zoned_is_aligned(hole_start, zinfo->zone_size));
+	ASSERT(btrfs_zoned_is_aligned(num_bytes, zinfo->zone_size));
 
 	while (pos < hole_end) {
-		begin = pos >> shift;
+		begin = btrfs_zone_no(pos, zinfo->zone_size);
 		end = begin + nzones;
 
 		if (end > zinfo->nr_zones)
@@ -671,7 +670,7 @@ u64 btrfs_find_allocatable_zones(struct btrfs_device *device, u64 hole_start,
 		 */
 		is_sequential = btrfs_dev_is_sequential(device, pos);
 		for (i = 0; i < end - begin; i++) {
-			u64 zone_offset = pos + ((u64)i << shift);
+			u64 zone_offset = pos + ((u64)i * zinfo->zone_size);
 
 			if ((is_sequential &&
 			     !btrfs_dev_is_empty_zone(device, zone_offset)) ||
@@ -691,7 +690,7 @@ u64 btrfs_find_allocatable_zones(struct btrfs_device *device, u64 hole_start,
 			if (!(end <= sb_zone ||
 			      sb_zone + BTRFS_NR_SB_LOG_ZONES <= begin)) {
 				have_sb = true;
-				pos = ((u64)sb_zone + BTRFS_NR_SB_LOG_ZONES) << shift;
+				pos = ((u64)sb_zone + BTRFS_NR_SB_LOG_ZONES) * (zinfo->zone_size);
 				break;
 			}
 
@@ -700,7 +699,7 @@ u64 btrfs_find_allocatable_zones(struct btrfs_device *device, u64 hole_start,
 			if (!(pos + num_bytes <= sb_pos ||
 			      sb_pos + BTRFS_SUPER_INFO_SIZE <= pos)) {
 				have_sb = true;
-				pos = ALIGN(sb_pos + BTRFS_SUPER_INFO_SIZE,
+				pos = btrfs_zoned_roundup(sb_pos + BTRFS_SUPER_INFO_SIZE,
 					    zinfo->zone_size);
 				break;
 			}
@@ -815,9 +814,9 @@ int btrfs_load_block_group_zone_info(struct btrfs_fs_info *fs_info,
 			error("zoned: unaligned initial system block group");
 			return -EIO;
 		}
-	} else if (!IS_ALIGNED(length, fs_info->zone_size)) {
-		error("zoned: unaligned block group at %llu + %llu", logical,
-		      length);
+	} else if (!btrfs_zoned_is_aligned(length, fs_info->zone_size)) {
+		error("zoned: unaligned block group at %llu + %llu with zone_size: %llu", logical,
+		      length, fs_info->zone_size);
 		return -EIO;
 	}
 
@@ -862,7 +861,7 @@ int btrfs_load_block_group_zone_info(struct btrfs_fs_info *fs_info,
 		 * The group is mapped to a sequential zone. Get the zone write
 		 * pointer to determine the allocation offset within the zone.
 		 */
-		WARN_ON(!IS_ALIGNED(physical, fs_info->zone_size));
+		WARN_ON(!btrfs_zoned_is_aligned(physical, fs_info->zone_size));
 		zone = device->zone_info->zones[physical / fs_info->zone_size];
 
 		switch (zone.cond) {
