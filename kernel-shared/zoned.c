@@ -18,6 +18,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include "kerncompat.h"
 #include "kernel-lib/list.h"
 #include "kernel-shared/volumes.h"
 #include "kernel-shared/zoned.h"
@@ -34,6 +35,13 @@
 #define WP_CONVENTIONAL			((u64)-2)
 
 #define EMULATED_ZONE_SIZE		SZ_256M
+
+/*
+ * A minimum alignment of 1MB is chosen for zoned devices as their zone sizes
+ * can be non power of 2. This is to make sure the zones correctly align to the
+ * sectorsize.
+ */
+#define BTRFS_ZONED_MIN_SIZE_ALIGNMENT          SZ_1M
 
 static int btrfs_get_dev_zone_info(struct btrfs_device *device);
 
@@ -240,12 +248,9 @@ static int report_zones(int fd, const char *file,
 	unsigned int i, n = 0;
 	int ret;
 
-	/*
-	 * Zones are guaranteed (by kernel) to be a power of 2 number of
-	 * sectors. Check this here and make sure that zones are not too small.
-	 */
-	if (!zone_bytes || !is_power_of_2(zone_bytes)) {
-		error("zoned: illegal zone size %llu (not a power of 2)",
+	if (!zone_bytes ||
+	    !IS_ALIGNED(zone_bytes, BTRFS_ZONED_MIN_SIZE_ALIGNMENT)) {
+		error("zoned: illegal zone size(not aligned to stripe len) %llu",
 		      zone_bytes);
 		exit(1);
 	}
