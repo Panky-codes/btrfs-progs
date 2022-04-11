@@ -77,6 +77,41 @@ int btrfs_get_zone_info(int fd, const char *file,
 int btrfs_get_dev_zone_info_all_devices(struct btrfs_fs_info *fs_info);
 int btrfs_check_zoned_mode(struct btrfs_fs_info *fs_info);
 
+static inline bool btrfs_zoned_is_aligned(u64 pos, u64 zone_size)
+{
+	u64 remainder = 0;
+
+	if (is_power_of_2(zone_size))
+		return IS_ALIGNED(pos, zone_size);
+
+	div64_u64_rem(pos, zone_size, &remainder);
+	return remainder == 0;
+}
+
+static inline u32 btrfs_zone_no(u64 pos, u64 zone_size)
+{
+	if (is_power_of_2(zone_size))
+		return pos >> ilog2(zone_size);
+
+	return div64_u64(pos, zone_size);
+}
+
+static inline u64 btrfs_zoned_roundup(u64 pos, u64 zone_size)
+{
+	if (is_power_of_2(zone_size))
+		return ALIGN(pos, zone_size);
+
+	return roundup(pos, zone_size);
+}
+
+static inline u64 btrfs_zoned_rounddown(u64 pos, u64 zone_size)
+{
+	if (is_power_of_2(zone_size))
+		return round_down(pos, zone_size);
+
+	return rounddown(pos, zone_size);
+}
+
 #ifdef BTRFS_ZONED
 size_t btrfs_sb_io(int fd, void *buf, off_t offset, int rw);
 
