@@ -17,6 +17,7 @@
 
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <linux/fs.h>
 
 #include "kernel-lib/list.h"
 #include "kernel-shared/volumes.h"
@@ -403,10 +404,51 @@ int zero_zone_blocks(int fd, struct btrfs_zoned_device_info *zinfo, off_t start,
 	return 0;
 }
 
-static int sb_log_location(int fd, struct blk_zone *zones, int rw, u64 *bytenr_ret)
+/*
+ * Non po2 zone sizes will not align naturally at
+ * mirror 1 (512GB) and mirror 2 (4TB). The wp of the
+ * 1st zone in those superblock mirrors need to be
+ * moved to align at those offsets.
+ */
+static int fill_sb_wp_offset(int fd, struct blk_zone *zone, int mirror, u64 *wp_ret)
+{
+
+	u64 range[2];
+	u64 offset = 0;
+	int ret = 0;
+
+	if (is_power_of_2(zone->len) || !mirror)
+		return 0;
+
+	ASSERT(zone->wp == zone->start);
+
+	switch (mirror) {
+	case 1:
+		offset = (BTRFS_SB_LOG_FIRST_OFFSET >> SECTOR_SHIFT) % zone->len;
+		break;
+	case 2:
+		offset = (BTRFS_SB_LOG_SECOND_OFFSET >> SECTOR_SHIFT) % zone->len;
+		break;
+	}
+	range[0] = zone->start << SECTOR_SHIFT;
+	range[1] = offset << SECTOR_SHIFT;
+
+	ret = ioctl(fd, BLKZEROOUT, range);
+	if (ret)
+		return ret;
+
+	zone->wp += offset;
+	zone->cond = BLK_ZONE_COND_IMP_OPEN;
+	*wp_ret = zone->wp << SECTOR_SHIFT;
+	return 0;
+}
+
+static int sb_log_location(int fd, struct blk_zone *zones, int rw, int mirror,
+			   u64 *bytenr_ret)
 {
 	u64 wp;
 	int ret;
+	bool zones_empty = false;
 
 	/* Use the head of the zones if either zone is conventional */
 	if (zones[0].type == BLK_ZONE_TYPE_CONVENTIONAL) {
@@ -421,18 +463,32 @@ static int sb_log_location(int fd, struct blk_zone *zones, int rw, u64 *bytenr_r
 	if (ret != -ENOENT && ret < 0)
 		return ret;
 
+	if (ret == -ENOENT)
+		zones_empty = true;
+
 	if (rw == WRITE) {
 		struct blk_zone *reset = NULL;
+		int reset_zone_nr = -1;
 
-		if (wp == zones[0].start << SECTOR_SHIFT)
+		if (wp == zones[0].start << SECTOR_SHIFT) {
 			reset = &zones[0];
-		else if (wp == zones[1].start << SECTOR_SHIFT)
+			reset_zone_nr = 0;
+		}
+		else if (wp == zones[1].start << SECTOR_SHIFT) {
 			reset = &zones[1];
+			reset_zone_nr = 1;
+		}
 
 		if (reset && reset->cond != BLK_ZONE_COND_EMPTY) {
 			ASSERT(reset->cond == BLK_ZONE_COND_FULL);
 
 			ret = btrfs_reset_dev_zone(fd, reset);
+			if (ret)
+				return ret;
+		}
+
+		if (zones_empty || !reset_zone_nr) {
+			ret = fill_sb_wp_offset(fd, &zones[0], mirror, &wp);
 			if (ret)
 				return ret;
 		}
@@ -546,7 +602,7 @@ size_t btrfs_sb_io(int fd, void *buf, off_t offset, int rw)
 
 	zones = (struct blk_zone *)(rep + 1);
 
-	ret = sb_log_location(fd, zones, rw, &mapped);
+	ret = sb_log_location(fd, zones, rw, mirror, &mapped);
 	free(rep);
 	/*
 	 * Special case: no superblock found in the zones. This case happens
